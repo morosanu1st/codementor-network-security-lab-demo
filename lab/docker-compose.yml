@@ -1,0 +1,60 @@
+# Small segmented lab: attacker and victim live on separate isolated networks
+# and can only reach each other through the router container, where you
+# practice firewall rules. Both networks are `internal: true`, so nothing in
+# the lab can reach the internet or your home LAN.
+#
+#   attacker (10.10.10.5) --[attacker_net 10.10.10.0/24]-- router --[victim_net 10.10.20.0/24]-- victim (10.10.20.10)
+#                                                          10.10.10.254 / 10.10.20.254
+#
+# Tools are baked in at build time (the lab networks have no internet access).
+# Usage: docker compose up -d --build  ->  docker compose exec attacker sh
+# Tear down: docker compose down -v
+
+name: netsec-lab
+
+services:
+  router:
+    build: ./router
+    hostname: router
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    volumes:
+      - ./configs/router-firewall.sh:/router-firewall.sh:ro
+    networks:
+      attacker_net:
+        ipv4_address: 10.10.10.254
+      victim_net:
+        ipv4_address: 10.10.20.254
+
+  attacker:
+    build: ./attacker
+    hostname: attacker
+    cap_add: [NET_ADMIN, NET_RAW]
+    depends_on: [router]
+    networks:
+      attacker_net:
+        ipv4_address: 10.10.10.5
+
+  victim:
+    image: nginx:1.27-alpine
+    hostname: victim
+    cap_add: [NET_ADMIN]
+    depends_on: [router]
+    # Route replies back through the router, then run nginx in the foreground.
+    command: ["sh", "-c", "ip route replace 10.10.10.0/24 via 10.10.20.254 && nginx -g 'daemon off;'"]
+    networks:
+      victim_net:
+        ipv4_address: 10.10.20.10
+
+networks:
+  attacker_net:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.10.10.0/24
+  victim_net:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.10.20.0/24
